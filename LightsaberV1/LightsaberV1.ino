@@ -1,15 +1,16 @@
 
 #include <SD.h>
+#include <LowPower.h>
 #include "SaberConfig.h"
 #include "pins_arduino.h"
 
 #define ACCELEROMETER_ACTIVE
-//#define DEBUG
+#define DEBUG
 
 #define LED_PIN_COUNT 4
 const uint8_t LED_PINS[LED_PIN_COUNT] { 9, 6, 5, 10 };
 
-#define SW_PIN 8
+#define SW_PIN 2
 #define X_PIN A3
 #define Y_PIN A2
 #define Z_PIN A1
@@ -63,6 +64,7 @@ unsigned long clash_time = 0;
 #define SD_FOUND_BIT 0
 #define BUTTON_STATE_BIT 1
 #define HOLD_WAITING_BIT 2
+#define NEXT_BUTTON_STATE_BIT 3
 byte bitmap = 0;
 
 /*** AUDIO ***/
@@ -305,6 +307,10 @@ void set_timers() {
   interrupts();
 }
 
+void on_switch() {
+  bitWrite(bitmap, NEXT_BUTTON_STATE_BIT, digitalRead(SW_PIN));
+}
+
 void setup() {
   for (int i = 0; i < LED_PIN_COUNT; ++i) {
     pinMode(LED_PINS[i], OUTPUT);
@@ -317,6 +323,7 @@ void setup() {
   pinMode(Y_PIN, INPUT);
   pinMode(Z_PIN, INPUT);
   pinMode(SPEAKER_PIN, OUTPUT);
+  attachInterrupt(digitalPinToInterrupt(SW_PIN), on_switch, CHANGE);
   
   #ifdef DEBUG
   Serial.begin(9600);
@@ -570,7 +577,7 @@ void loop() {
       break;
   }
 
-  bool button_state = digitalRead(SW_PIN);
+  int button_state = bitRead(bitmap, NEXT_BUTTON_STATE_BIT);
   if (button_state != bitRead(bitmap, BUTTON_STATE_BIT)) {
     if (button_state) {
       bitSet(bitmap, BUTTON_STATE_BIT);
@@ -587,6 +594,24 @@ void loop() {
   } else if (bitRead(bitmap, HOLD_WAITING_BIT) && ms >= hold_time) {
     bitClear(bitmap, HOLD_WAITING_BIT);
     onButtonHold();
+  }
+
+  // If the saber is turned off, the button is released,
+  // and there is no sound playing, go into power saving mode.
+  // This will wake up on interrupt when the button is pushed.
+  if (saber_state == SABER_OFF && !button_state
+      && !bitRead(TIMSK1, ICIE1)) {
+    #ifdef DEBUG
+    Serial.println("good night");
+    Serial.flush();
+    #endif
+    
+    LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
+    
+    #ifdef DEBUG
+    Serial.println("good morning");
+    Serial.flush();
+    #endif
   }
 
   while (millis() < ms + 30);
